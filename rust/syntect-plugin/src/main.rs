@@ -36,17 +36,17 @@ use xi_trace::{trace, trace_block};
 use xi_plugin_lib::{Cache, Plugin, StateCache, View, mainloop};
 
 use syntect::parsing::{ParseState, ScopeStack, SyntaxSet, SCOPE_REPO,
-                       SyntaxDefinition, ScopeRepository};
+                       SyntaxReference, ScopeRepository};
 use stackmap::{StackMap, LookupResult};
 
 const LINES_PER_RPC: usize = 10;
 const INDENTATION_PRIORITY: u64 = 100;
 
 /// The state for syntax highlighting of one file.
-struct PluginState {
+struct PluginState<'a> {
     stack_idents: StackMap,
     offset: usize,
-    initial_state: LineState,
+    initial_state: LineState<'a>,
     spans_start: usize,
     // unflushed spans
     spans: Vec<ScopeSpan>,
@@ -60,15 +60,15 @@ type LockedRepo = MutexGuard<'static, ScopeRepository>;
 // Note: this needs to be option because the caching layer relies on Default.
 // We can't implement that because the actual initial state depends on the
 // syntax. There are other ways to handle this, but this will do for now.
-type LineState = Option<(ParseState, ScopeStack)>;
+type LineState<'a> = Option<(ParseState<'a>, ScopeStack)>;
 
 /// The state of syntax highlighting for a collection of buffers.
 struct Syntect<'a> {
-    view_state: HashMap<ViewId, PluginState>,
+    view_state: HashMap<ViewId, PluginState<'a>>,
     syntax_set: &'a SyntaxSet,
 }
 
-impl PluginState {
+impl<'a> PluginState<'a> {
     fn new() -> Self {
         PluginState {
             stack_idents: StackMap::default(),
@@ -81,7 +81,7 @@ impl PluginState {
     }
 
     // compute syntax for one line, also accumulating the style spans
-    fn compute_syntax(&mut self, line: &str, state: LineState) -> LineState {
+    fn compute_syntax(&mut self, line: &str, state: LineState<'a>) -> LineState<'a> {
         let (mut parse_state, mut scope_state) = state.or_else(|| self.initial_state.clone()).unwrap();
         let ops = parse_state.parse_line(&line);
 
@@ -127,7 +127,7 @@ impl PluginState {
 
     #[allow(unused)]
     // Return true if there's any more work to be done.
-    fn highlight_one_line(&mut self, ctx: &mut MyView) -> bool {
+    fn highlight_one_line(&mut self, ctx: &mut MyView<'a>) -> bool {
         if let Some(line_num) = ctx.get_frontier() {
             let (line_num, offset, state) = ctx.get_prev(line_num);
             if offset != self.offset {
@@ -166,7 +166,7 @@ impl PluginState {
         false
     }
 
-    fn flush_spans(&mut self, ctx: &mut MyView) {
+    fn flush_spans(&mut self, ctx: &mut MyView<'a>) {
         let _t = trace_block("PluginState::flush_spans", &["syntect"]);
         if !self.new_scopes.is_empty() {
             ctx.add_scopes(&self.new_scopes);
@@ -181,7 +181,7 @@ impl PluginState {
     }
 }
 
-type MyView = View<StateCache<LineState>>;
+type MyView<'a> = View<StateCache<LineState<'a>>>;
 
 impl<'a> Syntect<'a> {
     fn new(syntax_set: &'a SyntaxSet) -> Self {
@@ -192,10 +192,10 @@ impl<'a> Syntect<'a> {
     }
 
     /// Wipes any existing state and starts highlighting with `syntax`.
-    fn do_highlighting(&mut self, view: &mut MyView) {
+    fn do_highlighting(&mut self, view: &mut MyView<'a>) {
         let initial_state = {
             let syntax = self.guess_syntax(view.get_path());
-            Some((ParseState::new(syntax), ScopeStack::new()))
+            Some((ParseState::new(self.syntax_set, syntax), ScopeStack::new()))
         };
 
         let state = self.view_state.get_mut(&view.get_id()).unwrap();
@@ -208,7 +208,7 @@ impl<'a> Syntect<'a> {
         view.schedule_idle();
     }
 
-    fn guess_syntax(&'a self, path: Option<&Path>) -> &'a SyntaxDefinition {
+    fn guess_syntax(&self, path: Option<&Path>) -> &'a SyntaxReference {
         let _t = trace_block("Syntect::guess_syntax", &["syntect"]);
         match path {
             Some(path) => self.syntax_set.find_syntax_for_file(path)
@@ -297,7 +297,7 @@ impl<'a> Syntect<'a> {
 
 
 impl<'a> Plugin for Syntect<'a> {
-    type Cache = StateCache<LineState>;
+    type Cache = StateCache<LineState<'a>>;
 
     fn new_view(&mut self, view: &mut View<Self::Cache>) {
         let _t = trace_block("Syntect::new_view", &["syntect"]);

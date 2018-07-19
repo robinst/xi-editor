@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use xi_core::plugin_manifest::*;
 use xi_core::LanguageDefinition;
-use syntect::parsing::{SyntaxSet, SyntaxDefinition};
+use syntect::parsing::{SyntaxSet, SyntaxReference};
 use toml::Value;
 
 const OUT_FILE_NAME: &str = "generated_manifest.toml";
@@ -68,7 +68,7 @@ fn main() -> Result<(), io::Error> {
     f.write_all(toml_str.as_ref())
 }
 
-fn lang_from_syn<'a>(src: &'a SyntaxDefinition) -> LanguageDefinition {
+fn lang_from_syn<'a>(src: &'a SyntaxReference) -> LanguageDefinition {
     LanguageDefinition {
         name: src.name.as_str().into(),
         extensions: src.file_extensions.clone(),
